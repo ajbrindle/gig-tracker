@@ -4,6 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GigTracker</title>
+
+    <!-- Tell the browser what color to make the mobile status bar (Indigo-600) -->
+    <meta name="theme-color" content="#4F46E5">
+    
+    <!-- The Manifest for Android -->
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- Fallback icons for the browser tab and iOS -->
+    <link rel="icon" type="image/png" href="icon-256.png">
+    <link rel="apple-touch-icon" href="icon-256.png">
+
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 font-sans min-h-screen">
@@ -16,31 +27,29 @@
                 <p class="text-sm text-gray-500 mt-1">Manchester & Stockport Area</p>
             </div>
             
-            <!-- The Two Buttons -->
             <div class="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                <button id="sync-btn" class="bg-white border-2 border-indigo-600 text-indigo-600 hover:bg-indigo-50 font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50">
+                <button id="sync-btn" class="bg-white border-2 border-indigo-600 text-indigo-600 hover:bg-indigo-50 font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                     Force Sync (2 mins)
                 </button>
-                <button id="load-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-6 rounded-lg shadow-md transition duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50">
+                <button id="load-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-6 rounded-lg shadow-md transition duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                     Load Unseen Gigs
                 </button>
             </div>
         </header>
 
-        <!-- Status Message / Loading -->
-        <div id="status-message" class="hidden text-center py-4 mb-4 font-medium rounded-lg">
-            <!-- Text injected via JS -->
-        </div>
+        <!-- Status Message -->
+        <div id="status-message" class="hidden text-center py-4 mb-4 font-medium rounded-lg"></div>
 
-        <!-- Action Bar (Hidden by default) -->
+        <!-- Action Bar -->
         <div id="action-bar" class="hidden flex justify-end mb-4">
             <button id="dismiss-btn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium py-1 px-4 rounded transition-colors text-sm">
-                Dismiss All (Mark as Seen)
+                Dismiss All (Except Saved)
             </button>
         </div>
 
         <!-- Gigs Container -->
-        <div id="gigs-container" class="space-y-6">            <div class="text-center text-gray-400 py-12 border-2 border-dashed border-gray-300 rounded-xl">
+        <div id="gigs-container" class="space-y-6">
+            <div class="text-center text-gray-400 py-12 border-2 border-dashed border-gray-300 rounded-xl">
                 Click "Load Unseen Gigs" to check the database.
             </div>
         </div>
@@ -52,157 +61,227 @@
 
         const loadBtn = document.getElementById('load-btn');
         const syncBtn = document.getElementById('sync-btn');
+        const dismissBtn = document.getElementById('dismiss-btn');
         const statusMsg = document.getElementById('status-message');
         const gigsContainer = document.getElementById('gigs-container');
-        const dismissBtn = document.getElementById('dismiss-btn');
         const actionBar = document.getElementById('action-bar');
 
-        // Helper function to manage UI state
         function setUIState(isLoading, message, isWarning = false) {
             loadBtn.disabled = isLoading;
             syncBtn.disabled = isLoading;
-            
             if (isLoading) {
                 loadBtn.classList.add('opacity-50', 'cursor-not-allowed');
                 syncBtn.classList.add('opacity-50', 'cursor-not-allowed');
                 statusMsg.classList.remove('hidden', 'bg-green-100', 'text-green-800');
-                
-                if (isWarning) {
-                    statusMsg.classList.add('bg-amber-100', 'text-amber-800', 'animate-pulse');
-                } else {
-                    statusMsg.classList.add('bg-blue-100', 'text-blue-800', 'animate-pulse');
-                }
+                statusMsg.classList.add(isWarning ? 'bg-amber-100' : 'bg-blue-100', isWarning ? 'text-amber-800' : 'text-blue-800', 'animate-pulse');
                 statusMsg.textContent = message;
             } else {
                 loadBtn.classList.remove('opacity-50', 'cursor-not-allowed');
                 syncBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                statusMsg.classList.add('hidden');
-                statusMsg.className = "hidden text-center py-4 mb-4 font-medium rounded-lg"; // reset classes
+                statusMsg.className = "hidden text-center py-4 mb-4 font-medium rounded-lg"; 
             }
         }
 
         // ==========================================
-        // ACTION 1: READ ONLY (Instantly loads data)
+        // TOGGLE INTEREST STATUS
+        // ==========================================
+        window.toggleInterest = async function(gigId, btnElement) {
+            const isCurrentlyInterested = btnElement.getAttribute('data-interested') === 'true';
+            const newState = !isCurrentlyInterested;
+            
+            btnElement.setAttribute('data-interested', newState);
+            if (newState) {
+                btnElement.innerHTML = `★ Saved`;
+                btnElement.className = "text-amber-600 bg-amber-50 px-3 py-2 rounded-md border border-amber-200 text-sm font-medium transition-colors cursor-pointer";
+            } else {
+                btnElement.innerHTML = `☆ Save`;
+                btnElement.className = "text-gray-500 hover:bg-gray-100 px-3 py-2 rounded-md border border-gray-300 text-sm font-medium transition-colors cursor-pointer";
+            }
+
+            try {
+                await fetch(`${CLOUD_FUNCTION_URL}?action=toggleInterested&gigId=${gigId}&interested=${newState}`);
+            } catch(e) {
+                console.error("Failed to update status", e);
+            }
+        };
+
+        // ==========================================
+        // ACTIONS (Load, Sync, Dismiss)
         // ==========================================
         loadBtn.addEventListener('click', async () => {
             setUIState(true, "Fetching gigs from database...");
             gigsContainer.innerHTML = '';
-
             try {
                 const response = await fetch(CLOUD_FUNCTION_URL);
                 if (!response.ok) throw new Error('Network response was not ok');
-                
                 const data = await response.json();
                 renderGigs(data.newGigs || {});
-
             } catch (error) {
-                console.error("Error fetching gigs:", error);
-                gigsContainer.innerHTML = `<div class="text-red-500 text-center py-4 bg-red-50 rounded-lg border border-red-200">Failed to load gigs. Check console for details.</div>`;
-            } finally {
-                setUIState(false);
-            }
+                gigsContainer.innerHTML = `<div class="text-red-500 text-center py-4 bg-red-50 rounded-lg">Failed to load gigs.</div>`;
+            } finally { setUIState(false); }
         });
 
-        // ==========================================
-        // ACTION 2: SYNC (Runs the 2-minute scrape)
-        // ==========================================
         syncBtn.addEventListener('click', async () => {
-            setUIState(true, "Scraping Songkick... This takes about 2 minutes. Please don't close this page.", true);
-            gigsContainer.innerHTML = `<div class="text-center text-gray-400 py-12 border-2 border-dashed border-gray-300 rounded-xl">Sync in progress... grabbing coffee ☕</div>`;
-
+            setUIState(true, "Scraping Songkick... This takes about 2 minutes.", true);
+            gigsContainer.innerHTML = `<div class="text-center text-gray-400 py-12 border-2 border-dashed border-gray-300 rounded-xl">Sync in progress... ☕</div>`;
             try {
-                const response = await fetch(`${CLOUD_FUNCTION_URL}?action=sync`);
-                if (!response.ok) throw new Error('Network response was not ok');
-                
-                const resultText = await response.text();
-                console.log(resultText); // Should say "Sync complete."
-
-                // Show success briefly, then auto-click the load button!
+                await fetch(`${CLOUD_FUNCTION_URL}?action=sync`);
                 statusMsg.className = "text-center py-4 mb-4 font-medium rounded-lg bg-green-100 text-green-800";
                 statusMsg.textContent = "Sync complete! Loading new gigs...";
-                
-                setTimeout(() => {
-                    loadBtn.click();
-                }, 1500);
-
+                setTimeout(() => loadBtn.click(), 1500);
             } catch (error) {
-                console.error("Error during sync:", error);
-                gigsContainer.innerHTML = `<div class="text-red-500 text-center py-4 bg-red-50 rounded-lg border border-red-200">Sync failed. Check console for details.</div>`;
+                gigsContainer.innerHTML = `<div class="text-red-500 text-center py-4 bg-red-50 rounded-lg border border-red-200">Sync failed.</div>`;
                 setUIState(false);
             }
         });
 
-        // Add the logic for the dismiss button
         dismissBtn.addEventListener('click', async () => {
-            const confirmDismiss = confirm("Are you sure? This will clear this list until new gigs are announced.");
-            if (!confirmDismiss) return;
-
+            if (!confirm("Clear all unseen gigs? (Gigs you 'Saved' will stay on your list!)")) return;
             dismissBtn.disabled = true;
             dismissBtn.textContent = "Clearing...";
-
             try {
-                // Call the new backend endpoint
-                const response = await fetch(`${CLOUD_FUNCTION_URL}?action=markSeen`);
-                if (!response.ok) throw new Error('Network response was not ok');
-                
-                // Clear the UI
-                renderGigs({}); 
-                
+                await fetch(`${CLOUD_FUNCTION_URL}?action=markSeen`);
+                loadBtn.click(); 
             } catch (error) {
-                console.error("Error clearing gigs:", error);
                 alert("Failed to dismiss gigs. Try again.");
             } finally {
                 dismissBtn.disabled = false;
-                dismissBtn.textContent = "Dismiss All (Mark as Seen)";
+                dismissBtn.textContent = "Dismiss All (Except Saved)";
             }
         });
 
         // ==========================================
-        // RENDER LOGIC
+        // UI GENERATORS & RENDER LOGIC
         // ==========================================
+
+        // Helper function to draw identical HTML for a single gig row
+        function generateGigRowHtml(gig) {
+            const isStarred = !!gig.interested;
+            return `
+                <li class="px-6 py-5 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-gray-50 transition-colors">
+                    <div class="mb-4 sm:mb-0">
+                        <p class="text-lg font-semibold text-gray-900">${gig.artist}</p>
+                        <div class="flex items-center text-sm text-gray-500 mt-1">
+                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                            ${new Date(gig.date).toLocaleDateString('en-GB', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' })}
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <button onclick="toggleInterest('${gig.id}', this)" data-interested="${isStarred}" class="${isStarred ? 'text-amber-600 bg-amber-50 px-3 py-2 rounded-md border border-amber-200 text-sm font-medium transition-colors cursor-pointer' : 'text-gray-500 hover:bg-gray-100 px-3 py-2 rounded-md border border-gray-300 text-sm font-medium transition-colors cursor-pointer'}">
+                            ${isStarred ? '★ Saved' : '☆ Save'}
+                        </button>
+                        <a href="${gig.ticketUrl}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-indigo-700 bg-indigo-100 hover:bg-indigo-200 transition-colors">
+                            More Information
+                        </a>
+                    </div>
+                </li>
+            `;
+        }
+
+        // Inline toggle logic for expanding venues
+        window.toggleVenueGigs = async function(venueName, headerElem) {
+            const isExpanded = headerElem.getAttribute('data-expanded') === 'true';
+            const wrapper = headerElem.nextElementSibling;
+            const originalList = wrapper.querySelector('.original-list');
+            const expandedList = wrapper.querySelector('.expanded-list');
+            
+            const toggleText = headerElem.querySelector('.toggle-text');
+            const toggleIcon = headerElem.querySelector('.toggle-icon');
+            const viewStatus = headerElem.querySelector('.view-status');
+            const indicatorContainer = headerElem.querySelector('.text-indigo-600');
+
+            if (isExpanded) {
+                // Collapse back to original view
+                headerElem.setAttribute('data-expanded', 'false');
+                expandedList.classList.add('hidden');
+                originalList.classList.remove('hidden');
+                
+                toggleText.textContent = 'Load All Events';
+                viewStatus.textContent = '(New & Saved)';
+                toggleIcon.classList.remove('rotate-180');
+                
+                // Reset styling to only show on hover
+                indicatorContainer.classList.remove('opacity-100');
+                indicatorContainer.classList.add('opacity-0', 'group-hover:opacity-100');
+            } else {
+                // Expand to show all
+                headerElem.setAttribute('data-expanded', 'true');
+                originalList.classList.add('hidden');
+                expandedList.classList.remove('hidden');
+                
+                toggleText.textContent = 'Loading...';
+                
+                // Make indicator permanently visible while expanded
+                indicatorContainer.classList.remove('opacity-0', 'group-hover:opacity-100');
+                indicatorContainer.classList.add('opacity-100');
+                
+                // Fetch data if we haven't already fetched it this session
+                if (expandedList.innerHTML.trim() === '') {
+                    expandedList.innerHTML = `<li class="px-6 py-8 text-center text-indigo-500 animate-pulse font-medium">Fetching full calendar...</li>`;
+                    try {
+                        const response = await fetch(`${CLOUD_FUNCTION_URL}?action=venue&venue=${encodeURIComponent(venueName)}`);
+                        if (!response.ok) throw new Error('Network error');
+                        const data = await response.json();
+                        
+                        if (data.gigs.length === 0) {
+                            expandedList.innerHTML = `<li class="px-6 py-8 text-center text-gray-500">No future gigs found in database.</li>`;
+                        } else {
+                            // Inject using our identical HTML helper function!
+                            expandedList.innerHTML = data.gigs.map(generateGigRowHtml).join('');
+                        }
+                    } catch (error) {
+                        expandedList.innerHTML = `<li class="px-6 py-8 text-center text-red-500">Failed to load calendar. Click header to retry.</li>`;
+                        headerElem.setAttribute('data-expanded', 'false'); 
+                        return;
+                    }
+                }
+                
+                toggleText.textContent = 'Show New Only';
+                viewStatus.textContent = '(All Upcoming Events)';
+                toggleIcon.classList.add('rotate-180');
+            }
+        };
+
         function renderGigs(groupedGigs) {
             const venues = Object.keys(groupedGigs);
             
             if (venues.length === 0) {
-                actionBar.classList.add('hidden'); // Hide dismiss button
+                actionBar.classList.add('hidden');
                 gigsContainer.innerHTML = `<div class="text-center text-gray-500 py-12 bg-white rounded-xl shadow-sm border border-gray-200">No new gigs announced since your last check!</div>`;
                 return;
             }
 
-            actionBar.classList.remove('hidden'); // Show dismiss button
+            actionBar.classList.remove('hidden');
 
             venues.forEach(venueName => {
                 const gigs = groupedGigs[venueName];
                 const section = document.createElement('div');
                 section.className = "bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden";
-                
+                const safeVenueName = venueName.replace(/'/g, "\\'");
+
+                // The Header (Now a toggle trigger)
                 section.innerHTML = `
-                    <div class="bg-gray-50 px-6 py-4 border-b border-gray-200">
-                        <h2 class="text-xl font-bold text-gray-800">${venueName}</h2>
+                    <div onclick="toggleVenueGigs('${safeVenueName}', this)" data-expanded="false" class="bg-gray-50 px-6 py-4 border-b border-gray-200 cursor-pointer hover:bg-gray-200 transition-colors flex justify-between items-center group">
+                        <div class="flex items-baseline">
+                            <h2 class="text-xl font-bold text-gray-800">${venueName}</h2>
+                            <span class="view-status text-sm text-gray-500 ml-3 font-normal">(New & Saved)</span>
+                        </div>
+                        <span class="text-sm font-medium text-indigo-600 flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span class="toggle-text">Load All Events</span>
+                            <svg class="w-4 h-4 ml-1 transform transition-transform duration-200 toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                        </span>
+                    </div>
+                    
+                    <div class="gigs-wrapper relative">
+                        <!-- Default List (New/Saved only) -->
+                        <ul class="divide-y divide-gray-100 original-list">
+                            ${gigs.map(generateGigRowHtml).join('')}
+                        </ul>
+                        <!-- Expanded List (All Upcoming - Fetched on click) -->
+                        <ul class="divide-y divide-gray-100 expanded-list hidden"></ul>
                     </div>
                 `;
 
-                const ul = document.createElement('ul');
-                ul.className = "divide-y divide-gray-100";
-
-                gigs.forEach(gig => {
-                    ul.innerHTML += `
-                        <li class="px-6 py-5 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-gray-50 transition-colors">
-                            <div class="mb-4 sm:mb-0">
-                                <p class="text-lg font-semibold text-gray-900">${gig.artist}</p>
-                                <div class="flex items-center text-sm text-gray-500 mt-1">
-                                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                                    ${new Date(gig.date).toLocaleDateString('en-GB', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' })}
-                                </div>
-                            </div>
-                            <a href="${gig.ticketUrl}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-indigo-700 bg-indigo-100 hover:bg-indigo-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors">
-                                Full Details
-                            </a>
-                        </li>
-                    `;
-                });
-
-                section.appendChild(ul);
                 gigsContainer.appendChild(section);
             });
         }
