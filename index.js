@@ -109,7 +109,14 @@ exports.checkGigs = async (req, res) => {
             const snapshot = await firestore.collection(collectionName).where('venue', '==', venueName).get();
             
             let venueGigs = [];
-            snapshot.forEach(doc => venueGigs.push(doc.data()));
+            snapshot.forEach(doc => {
+                const gigData = doc.data();
+                // Ensure id is set (use document ID as fallback for backwards compatibility)
+                if (!gigData.id) {
+                    gigData.id = doc.id;
+                }
+                venueGigs.push(gigData);
+            });
 
             // Sort them chronologically by date
             venueGigs.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -117,12 +124,24 @@ exports.checkGigs = async (req, res) => {
             res.status(200).json({ gigs: venueGigs });
 
         } else {
-            /* === MODE 5: READ ONLY (NEW GIGS) === */
-            const snapshot = await firestore.collection(collectionName).where('isNew', '==', true).get();
-            let newGigsList = [];
-            snapshot.forEach(doc => newGigsList.push(doc.data()));
+            /* === MODE 5: READ ONLY (NEW GIGS + SAVED GIGS) === */
+            const newGigsSnapshot = await firestore.collection(collectionName).where('isNew', '==', true).get();
+            const savedGigsSnapshot = await firestore.collection(collectionName).where('interested', '==', true).get();
 
-            const groupedGigs = newGigsList.reduce((acc, gig) => {
+            const gigsById = new Map();
+            const addGig = (doc) => {
+                const gigData = doc.data();
+                if (!gigData.id) {
+                    gigData.id = doc.id;
+                }
+                gigsById.set(gigData.id, gigData);
+            };
+
+            newGigsSnapshot.forEach(addGig);
+            savedGigsSnapshot.forEach(addGig);
+
+            const combinedGigs = Array.from(gigsById.values());
+            const groupedGigs = combinedGigs.reduce((acc, gig) => {
                 if (!acc[gig.venue]) acc[gig.venue] = [];
                 acc[gig.venue].push(gig);
                 return acc;
